@@ -37,9 +37,12 @@ if use_astar
 else
     route_idx = greedy_3d(map, start_idx, goal_idx);
 end
-% 4️⃣  Convert back to Gazebo world coords  (REPLACE route = … line)
-route_world = idx2world(route_idx);     % centre of each cell
-route = route_world;
+
+% -------------------------------------------------------------------------
+% 4️⃣  Convert back to Gazebo world coords and add smooth interpolation
+route_world = idx2world(route_idx);  % Centre of each cell
+route_smooth = interpolate_route(route_world);
+route = route_smooth;  % Use smoothed route instead
 
 disp('Route (array indices:  [row col layer])');
 disp(route_idx);
@@ -97,3 +100,40 @@ mix_matrix      = inv(motor_constant * allocation_matrix);
 air_density     = 1.2041;
 drag_coefficient = 0.47;
 reference_area   = pi * (75e-3)^2;
+
+%% FUNCTION DEFINITIONS
+function route_smooth = interpolate_route(waypoints)
+    % Generate smooth trajectory using spline interpolation
+    
+    if size(waypoints, 1) < 2
+        route_smooth = waypoints;
+        return;
+    end
+    
+    % Calculate cumulative distances for parameterization
+    distances = [0; cumsum(sqrt(sum(diff(waypoints).^2, 2)))];
+    
+    % Create fine-grained parameter for smooth interpolation
+    num_points = size(waypoints, 1) * 10;  % 10x more points
+    t_fine = linspace(0, distances(end), num_points);
+    
+    % Spline interpolation for each dimension
+    x_smooth = spline(distances, waypoints(:,1), t_fine);
+    y_smooth = spline(distances, waypoints(:,2), t_fine);
+    z_smooth = spline(distances, waypoints(:,3), t_fine);
+    
+    route_smooth = [x_smooth' y_smooth' z_smooth'];
+    
+    % Optional: Remove points that are too close together
+    min_distance = 0.1;  % Minimum distance between waypoints
+    keep_indices = [1];  % Always keep first point
+    
+    for i = 2:size(route_smooth, 1)
+        if norm(route_smooth(i,:) - route_smooth(keep_indices(end),:)) >= min_distance
+            keep_indices(end+1) = i;
+        end
+    end
+    keep_indices(end+1) = size(route_smooth, 1);  % Always keep last point
+    
+    route_smooth = route_smooth(unique(keep_indices), :);
+end
