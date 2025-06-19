@@ -79,3 +79,9 @@ You can use MATLAB or Python to fly your crazyflie.
 For MATLAB:
 Make sure that you change topic names in MATLAB simulink file according to your crazyflie name.
 Change topics starting from `/cf231/..` to `/cf<your_team_number>/..`
+
+
+
+
+- Optitrak, individual testing of balls to ensure what is what
+- 
