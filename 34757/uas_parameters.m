@@ -16,13 +16,13 @@ maze_1_3D          % ↩️  edit if you want a different maze
 Ny = size(map,1);                    % number of rows in the maze
 
 % map-index  ⟷  Gazebo-world transforms (cell centres)
-idx2world = @(idx) [ (idx(:,2)-0.5) ,  (Ny-idx(:,1)+0.5) ,  idx(:,3) ];
+idx2world = @(idx) [ (idx(:,2)-1.0) ,  (Ny-idx(:,1)+0.0) ,  idx(:,3) ];
 world2idx = @(pos) [  Ny-pos(:,2)   ,  pos(:,1)+1        ,  pos(:,3) ];
 
 % -------------------------------------------------------------------------
 % 1️⃣  Define start / goal in 0-based **world** coordinates (metres, cells…)
 start_pos_w = [0 0 1];
-goal_pos_w  = [3 9 1];
+goal_pos_w  = [3 5 1];
 
 % 2️⃣  Convert to map indices  (REPLACE the +[1 1 0] line)
 start_idx = world2idx(start_pos_w);
@@ -41,68 +41,74 @@ end
 % Convert back to Gazebo world coordinates
 route_world = idx2world(route_idx);  % Center of each cell
 
-% Generate smooth trajectory using custom spline-based generator
+% Generate trajectory
 total_time = 10.0; % Total time for the trajectory (seconds)
 dt = 0.3; % Time step for sampling
 
 % --- CHOOSE TRAJECTORY GENERATION METHOD ---
-USE_BSPLINE_TRAJECTORY = true; % Set to true for B-splines, false for original interpolating spline
+USE_BSPLINE_TRAJECTORY = true; % Set to true for B-splines, false for raw A* waypoints
 
 % Define map dimensions needed for collision checking
 Nx = size(map, 2); % Number of columns in the maze
 Nz = size(map, 3); % Number of layers in the maze
 
-% Helper function for collision checking
-check_collisions = @(trajectory_points) check_trajectory_collisions(trajectory_points, map, world2idx, Ny, Nx, Nz);
+if USE_BSPLINE_TRAJECTORY
+    % Use B-spline with collision checking and fallbacks
+    route_world_current = route_world;
+    collision_free = false;
+    attempt = 1;
+    max_attempts = 10;
 
-% First attempt with original waypoints
-route_world_current = route_world;
-collision_free = false;
-attempt = 1;
-max_attempts = 10;
-
-while ~collision_free && attempt <= max_attempts
-    if USE_BSPLINE_TRAJECTORY
+    while ~collision_free && attempt <= max_attempts
         disp(['Generating trajectory with B-splines (attempt ', num2str(attempt), ')...']);
         poly_traj = bspline_trajectory_gen(route_world_current, total_time, dt);
         disp('B-spline trajectory generated.');
-    else
-        disp(['Generating trajectory with original interpolating spline (attempt ', num2str(attempt), ')...']);
-        poly_traj = simple_trajectory_gen(route_world_current, total_time, dt);
-    end
-    
-    % Sample the trajectory at regular intervals
-    route_smooth = poly_traj(:, 2:4);  % Extract position data
-    
-    % Check for collisions
-    [collided_indices, has_collision] = check_collisions(route_smooth);
-    
-    if ~has_collision
-        collision_free = true;
-        disp(['Collision-free trajectory found on attempt ', num2str(attempt), '.']);
-    else
-        warning(['Attempt ', num2str(attempt), ' failed. Trajectory collided at map indices:']);
-        disp(collided_indices);
         
-        if attempt < max_attempts
-            if attempt <= 3
-                % First few attempts: add density
-                disp('Generating denser waypoints to avoid obstacles...');
-                route_world_current = generate_denser_waypoints(route_world_current);
-            else
-                % Later attempts: use obstacle-avoiding waypoints
-                disp('Generating obstacle-avoiding waypoints...');
-                route_world_current = generate_obstacle_avoiding_waypoints(route_world_current, map, world2idx, idx2world, Ny, Nx, Nz);
-            end
+        % Sample the trajectory at regular intervals
+        route_smooth = poly_traj(:, 2:4);  % Extract position data
+        
+        % Check for collisions
+        [collided_indices, has_collision] = check_trajectory_collisions(route_smooth, map, world2idx, Ny, Nx, Nz);
+        
+        if ~has_collision
+            collision_free = true;
+            disp(['Collision-free B-spline trajectory found on attempt ', num2str(attempt), '.']);
+            route = route_smooth;  % Use smoothed trajectory
         else
-            error('Failed to generate collision-free trajectory after maximum attempts.');
+            warning(['Attempt ', num2str(attempt), ' failed. Trajectory collided at map indices:']);
+            disp(collided_indices);
+            
+            if attempt < max_attempts
+                if attempt <= 3
+                    % First few attempts: add density
+                    disp('Generating denser waypoints to avoid obstacles...');
+                    route_world_current = generate_denser_waypoints(route_world_current);
+                else
+                    % Later attempts: use obstacle-avoiding waypoints
+                    disp('Generating obstacle-avoiding waypoints...');
+                    route_world_current = generate_obstacle_avoiding_waypoints(route_world_current, map, world2idx, idx2world, Ny, Nx, Nz);
+                end
+            else
+                error('Failed to generate collision-free B-spline trajectory after maximum attempts.');
+            end
         end
+        
+        attempt = attempt + 1;
     end
+else
+    % Use raw A* waypoints without any interpolation
+    disp('Using raw A* waypoints without interpolation...');
+    route = route_world;  % Use original A* waypoints directly
     
-    attempt = attempt + 1;
+    % Optional: Check if A* waypoints are on walls (they shouldn't be)
+    [collided_indices, has_collision] = check_trajectory_collisions(route, map, world2idx, Ny, Nx, Nz);
+    if has_collision
+        warning('Raw A* waypoints collide with obstacles at map indices:');
+        disp(collided_indices);
+    else
+        disp('Raw A* waypoints are collision-free.');
+    end
 end
-
-route = route_smooth;  % Use smoothed trajectory
 
 disp('Route (array indices:  [row col layer])');
 disp(route_idx);
