@@ -41,6 +41,9 @@ end
 % Convert back to Gazebo world coordinates
 route_world = idx2world(route_idx);  % Center of each cell
 
+% Simplify straight-line segments
+route_world_simplified = simplify_straight_segments(route_world, 0.01);
+
 % Generate trajectory
 total_time = 10.0; % Total time for the trajectory (seconds)
 dt = 0.3; % Time step for sampling
@@ -54,7 +57,7 @@ Nz = size(map, 3); % Number of layers in the maze
 
 if USE_BSPLINE_TRAJECTORY
     % Use B-spline with collision checking and fallbacks
-    route_world_current = route_world;
+    route_world_current = route_world_simplified;
     collision_free = false;
     attempt = 1;
     max_attempts = 10;
@@ -98,7 +101,7 @@ if USE_BSPLINE_TRAJECTORY
 else
     % Use raw A* waypoints without any interpolation
     disp('Using raw A* waypoints without interpolation...');
-    route = route_world;  % Use original A* waypoints directly
+    route = route_world_simplified;  % Use simplified waypoints directly
     
     % Optional: Check if A* waypoints are on walls (they shouldn't be)
     [collided_indices, has_collision] = check_trajectory_collisions(route, map, world2idx, Ny, Nx, Nz);
@@ -309,6 +312,43 @@ function safe_waypoints = generate_obstacle_avoiding_waypoints(original_waypoint
             end
         end
     end
+end
+
+function simplified_waypoints = simplify_straight_segments(waypoints, tolerance)
+    % Remove redundant waypoints that lie on straight line segments
+    if nargin < 2
+        tolerance = 1e-6;
+    end
+    if size(waypoints, 1) <= 2
+        simplified_waypoints = waypoints;
+        return;
+    end
+    simplified_waypoints = waypoints(1, :); % Always keep the first point
+    i = 1;
+    while i < size(waypoints, 1)
+        current_point = waypoints(i, :);
+        furthest_straight = i + 1;
+        for j = i + 2:size(waypoints, 1)
+            p1 = current_point;
+            p2 = waypoints(furthest_straight, :);
+            p3 = waypoints(j, :);
+            if is_collinear(p1, p2, p3, tolerance)
+                furthest_straight = j;
+            else
+                break;
+            end
+        end
+        simplified_waypoints = [simplified_waypoints; waypoints(furthest_straight, :)];
+        i = furthest_straight;
+    end
+end
+
+function collinear = is_collinear(p1, p2, p3, tolerance)
+    % Check if three 3D points are collinear within tolerance
+    v1 = p2 - p1;
+    v2 = p3 - p1;
+    cross_prod = cross(v1, v2);
+    collinear = norm(cross_prod) < tolerance;
 end
 
 %% DRONE & ENVIRONMENT PARAMETERS
